@@ -594,7 +594,7 @@ d_eligible %>%
 ```
 
 
-## Access methods for preregistrations, measurement instruments, data, and analysis scripts. Types of reporting guidelines.
+## Access methods for preregistrations, materials, data, and analysis scripts. Types of reporting guidelines.
 
 Supplementary Table X. Preregistration registries.
 
@@ -605,7 +605,7 @@ prereg_access_overall %>%
   kable(format = "html")
 ```
 
-Supplementary Table X. Measurement instrument sharing methods.
+Supplementary Table X. Materials sharing methods.
 
 ```{r}
 materials_access_method_overall  %>% 
