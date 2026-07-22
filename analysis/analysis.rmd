@@ -1,0 +1,955 @@
+---
+title: "Analysis"
+format: html
+execute:
+  warning: false
+  message: false
+  echo: true
+---
+
+The R code below reproduces the analyses reported in Galet-Lalande et al. (2026).
+
+# Load packages
+
+```{r}
+library(tidyverse) # for general analysis and munging functions
+library(here) # for accessing files
+library(knitr) # for tables
+library(kableExtra) # for tables
+```
+
+# Load custom functions
+
+```{r}
+# Define a "not in" operator
+`%notin%` <- Negate(`%in%`)
+
+# This function will compute percentages for specific variables and format them.
+count_percent <- function(data, ...) {
+  columns <- enquos(...)
+
+  d_count <- data %>%
+      count(!!!columns, .drop = FALSE) %>%
+      complete(!!!columns, fill = list(n = 0))
+  
+  d_overall <- d_count %>%
+      mutate(N = sum(n), percent = signif((n/N)*100,2), report = paste0(n, ' (', percent,'%)'))
+  
+  return(d_overall)
+}
+
+# same function as above but allows for grouping (e.g., by design or data type)
+count_percent_grouped <- function(data, ..., group = NULL) {
+  columns <- enquos(...)
+  group_vars <- enquos(group)
+
+  d_count <- data %>%
+    count(!!!group_vars, !!!columns, .drop = FALSE) %>%
+    complete(!!!group_vars, !!!columns, fill = list(n = 0))
+
+  d_out <- d_count %>%
+    group_by(!!!group_vars) %>%
+    mutate(
+      N = sum(n),
+      percent = signif((n / N) * 100, 2),
+      report = paste0(n, " (", percent, "%)")
+    ) %>%
+    ungroup()
+
+  return(d_out)
+}
+
+```
+
+# Load data
+
+```{r}
+# load the extracted data after coding discrepancies were resolved
+d <- read_csv(here('data','primary','extracted_data_resolved.csv'))
+
+# load the list of article metadata
+d_articles <- read_csv(here('data','primary','article_list.csv')) %>%
+  filter(duplicate == F)
+
+# combine article metadata with extracted data
+d <- d %>%
+  left_join(d_articles, by = "article_id")
+```
+
+# Rename columns
+
+We'll rename the columns so its easier to refer to them in this script.
+
+```{r}
+d <- d %>%
+  rename(
+    eligible_journal = `is.the.article.reported.in.a.peer-reviewed.academic.journal?`,
+    eligible_english = `is.the.article.written.in.english?`,
+    open_access_status = `can.you.view.an.open.access.version.of.this.article?`,
+    article_version_coded = `which.version.of.the.article.are.you.coding?`,
+    eligible_empirical = `does.the.article.report.empirical.research?`,
+    research_design = `what.is.the.research.design?.(tick.all.that.apply)`,
+    data_type = `what.is.the.data.type?.(tick.all.that.apply`,
+    prereg_statement = `does.the.article.state.whether.or.not.the.study.(or.some.aspect.of.the.study).was.preregistered?`,
+    prereg_statement_verbatim = prereg_verbatim,
+    prereg_access_method = `how.is.the.preregistration.accessed?.(according.to.the.statement)`,
+    prereg_access_status = `can.you.access.and.view.the.preregistration.(without.contacting.anyone)?`,
+    data_statement = `does.the.article.state.whether.or.not.data.are.available?`,
+    data_statement_verbatim = data_verbatim,
+    data_access_method = `how.are.the.data.accessed?.(according.to.the.statement)`,
+    data_access_status = `can.you.access,.download,.and.view.the.data.(without.contacting.anyone)?`,
+    data_reasons = `did.the.authors.provide.any.reasons.for.not.sharing.or.restricting.access.to.the.data?`,
+    materials_statement = `does.the.article.state.whether.or.not.any.materials.are.available?`,
+    materials_statement_verbatim = `materials_verbatim`,
+    materials_access_method = `how.are.the.materials.accessed?.(according.to.the.statement)`,
+    materials_access_status = `can.you.access,.download,.and.view.the.materials.(without.contacting.anyone)?`,
+    materials_reasons = `did.the.authors.provide.any.reasons.for.not.sharing.or.restricting.access.to.the.materials?`,
+    analysis_statement = `does.the.article.state.whether.or.not.analysis.scripts.are.available?`,
+    analysis_statement_verbatim = `analysis_verbatim`,
+    analysis_access_method = `how.is.the.analysis.script.accessed?.(according.to.the.statement)`,
+    analysis_access_status = `can.you.access,.download,.and.view.the.analysis.script.(without.contacting.anyone)?`,
+    analysis_reasons = `did.the.authors.provide.any.reasons.for.not.sharing.or.restricting.access.to.the.analysis.scripts?`,
+    reporting_statement = `is.there.a.statement.declaring.the.use.of.one.or.more.reporting.guidelines?`,
+    reporting_statement_verbatim = reporting_verbatim,
+    reporting_type = `which.guidelines.were.used.(if.any)?.(select.all.that.apply.and.use.the.other.option.if.necessary)`,
+    funding_statement = `does.the.article.include.a.statement.indicating.whether.there.were.funding.sources?`,
+    funding_statement_verbatim = `funding_verbatim`,
+    coi_statement = `does.the.article.include.a.statement.indicating.whether.there.were.any.conflicts.of.interest?`,
+    coi_statement_verbatim = `coi_verbatim`,
+    notes = `you.can.use.this.space.to.record.anything.interesting.or.problematic.about.this.article`)
+```
+
+# Select consensus data only
+
+```{r}
+d_consensus <- d %>% filter(coder == "Consensus")
+```
+
+# Results
+
+This section of code should reproduce the results reported in the manuscript.
+
+## Article eligibility and characteristics
+
+```{r}
+# create eligibility variable for article access
+d_consensus <- d_consensus %>%
+  mutate(eligible_access = ifelse(open_access_status == "No — I cannot access any version of the article", F, T))
+
+# identify reasons articles were excluded
+exclude_journal <- d_consensus %>% filter(eligible_journal == "NO") %>% nrow()
+exclude_english <- d_consensus %>% filter(eligible_journal == "YES", eligible_english == "NO") %>% nrow()
+exclude_access <- d_consensus %>% filter(eligible_journal == "YES", eligible_english == "YES", eligible_access == F) %>% nrow()
+exclude_empirical <- d_consensus %>% filter(eligible_journal == "YES", eligible_english == "YES", eligible_access == T, eligible_empirical == "No") %>% nrow()
+
+exclude_all <- sum(exclude_journal, exclude_english, exclude_access, exclude_empirical)
+
+# create overall exclude variable across all exclusion criteria
+d_consensus <- d_consensus %>% mutate(exclude = ifelse(eligible_journal == "YES" & eligible_english == "YES" & eligible_access == TRUE & eligible_empirical == "Yes", FALSE, TRUE))
+```
+
+```{r}
+# select eligible articles only
+d_eligible <- d_consensus %>% filter(exclude == F)
+```
+
+## Inter-rater agreement
+
+```{r}
+# IGL did the piloting with TEH so reclassify "pilot" coder as IGL
+d <- d %>% 
+  mutate(coder = case_when(
+    coder == "Pilot" ~ "IGL", 
+    TRUE ~ coder))
+
+vars <- c("prereg_statement", "materials_statement", "data_statement", "analysis_statement", "reporting_statement", "funding_statement", "coi_statement") # variables we will examine
+
+d_ira <- d %>% # from dataframe d
+  filter(article_id %in% c(d_eligible$article_id), # extract only articles that were agreed to be eligible
+         coder %in% c("IGL", "JB")) %>% # extract only the first and second coder rows
+  select(article_id, coder, all_of(vars)) %>%
+    mutate(across(all_of(vars), as.factor)) %>%
+  pivot_wider(names_from = coder, values_from = all_of(vars),
+              names_sep = "_")
+
+# check the factor levels (i.e., response options of IGL and JB) match
+# identical(levels(d_ira$prereg_statement_IGL), levels(d_ira$prereg_statement_JB))
+# identical(levels(d_ira$materials_statement_IGL), levels(d_ira$materials_statement_JB))
+# identical(levels(d_ira$data_statement_IGL), levels(d_ira$data_statement_JB))
+# identical(levels(d_ira$analysis_statement_IGL), levels(d_ira$analysis_statement_JB))
+# identical(levels(d_ira$reporting_statement_IGL), levels(d_ira$reporting_statement_JB))
+# identical(levels(d_ira$funding_statement_IGL), levels(d_ira$funding_statement_JB))
+# identical(levels(d_ira$coi_statement_IGL), levels(d_ira$coi_statement_JB))
+
+d_ira <- d_ira %>%
+  mutate(Preregistration = ifelse(prereg_statement_IGL == prereg_statement_JB, T, F),
+         Materials = ifelse(materials_statement_IGL == materials_statement_JB, T, F),
+         Data = ifelse(data_statement_IGL == data_statement_JB, T, F),
+         `Analysis scripts` = ifelse(analysis_statement_IGL == analysis_statement_JB, T, F),
+         `Reporting guidelines` = ifelse(reporting_statement_IGL == reporting_statement_JB, T, F),
+         Funding = ifelse(funding_statement_IGL == funding_statement_JB, T, F),
+         `Conflicts of interest` = ifelse(coi_statement_IGL == coi_statement_JB, T, F)) 
+```
+
+## Article eligibility and characteristics
+
+We screened `r d %>% filter(coder_type == "Consensus") %>% nrow()` articles and excluded `r exclude_journal` because they were not published in a peer-reviewed academic journal and `r exclude_empirical` because they were not empirical. `r exclude_english #exclude_access` articles were excluded because they were not written in English or because we could not access the article.
+
+## Article characteristics
+
+```{r}
+research_design <- d_eligible %>% count(research_design) 
+data_type <- d_eligible %>% count(data_type) 
+journals <- d_eligible %>% count(journal) %>% arrange(desc(n))
+pub_year <- d_eligible %>% count(publication_year) %>% arrange(desc(publication_year))
+```
+
+We classified the `r d_eligible %>% nrow()` eligible articles as primary research (n = `r research_design %>% filter(research_design == "Primary research study") %>% pull(n)`), secondary analyses (n = `r research_design %>% filter(research_design == "Secondary analysis") %>% pull(n)`), or both (n = `r research_design %>% filter(research_design == "Primary research study, Secondary analysis") %>% pull(n)`). We classified data types as quantitative (n = `r data_type %>% filter(data_type == "Quantitative data") %>% pull(n)`), qualitative (n = `r data_type %>% filter(data_type == "Qualitative data") %>% pull(n)`), or both (n = `r data_type %>% filter(data_type == "Qualitative data, Quantitative data") %>% pull(n)`). Subgroup analyses based on different research and data types are available in Supplementary Information X.
+
+The `r d_eligible %>% nrow()` eligible articles were published in `r journals %>% nrow()` different journals, with no journal accounting for more than `r journals %>% slice(1) %>% pull(n)` articles (see Supplementary Information X). Publication years ranged from `r min(as.numeric(d_eligible$publication_year))` to `r max(as.numeric(d_eligible$publication_year))` (see histogram in Supplementary Information X).
+
+## Preregistration
+
+### Preregistration statements
+
+```{r}
+# how many registered reports are there?
+is_registered_report <- d_eligible %>% filter(prereg_statement == "YES — the study is a Registered Report") %>% nrow()
+
+# collapse registered reports into general "yes there is a prereg" variable for remaining analyses
+d_eligible <- d_eligible %>%
+    mutate(prereg_statement = case_when(
+    prereg_statement == "YES — the study is a Registered Report" ~ "YES — the statement says that there is a preregistration",
+    TRUE ~ prereg_statement
+  ))
+
+prereg_statement_overall <- d_eligible %>%
+  count_percent(prereg_statement)
+
+prereg_statement_data_type <- d_eligible %>%
+  count_percent_grouped(prereg_statement, data_type)
+```
+
+`r prereg_statement_overall %>% filter(prereg_statement == "NO — there is no statement about preregistration") %>% pull(report)` articles did not contain a statement about preregistration and `r prereg_statement_overall %>% filter(prereg_statement == "YES — the statement says that there is no preregistration") %>% pull(report)` articles stated that there was no preregistration. The remaining `r prereg_statement_overall %>% filter(prereg_statement == "YES — the statement says that there is a preregistration") %>% pull(report)` articles stated that there was a preregistration, including `r is_registered_report` article which was a Registered Report.
+
+## Functional preregistration
+
+```{r}
+prereg_functional_overall <- d_eligible %>%
+  mutate(prereg_statement = case_when(
+    prereg_statement == "YES — the study is a Registered Report" ~ "YES — the statement says that there is a preregistration",
+    TRUE ~ prereg_statement
+  )) %>%
+  count_percent(prereg_statement, prereg_access_status)
+
+# Reasons for non-functional
+prereg_non_functional_reasons <- d_eligible %>%
+  filter(prereg_access_status == "NO") %>%
+  count(prereg_access_detail, .drop = FALSE)
+
+prereg_functional_data_type <- d_eligible %>%
+  mutate(prereg_statement = case_when(
+    prereg_statement == "YES — the study is a Registered Report" ~ "YES — the statement says that there is a preregistration",
+    TRUE ~ prereg_statement
+  )) %>%
+  count_percent(prereg_statement, prereg_access_status, data_type)
+```
+
+Of the `r prereg_statement_overall %>% filter(prereg_statement == "YES — the statement says that there is a preregistration") %>% pull(n)` articles that stated there was a preregistration, we could not access the preregistration for `r d_eligible %>% count(prereg_statement, prereg_access_status) %>% filter(prereg_statement == "YES — the statement says that there is a preregistration", prereg_access_status == "NO") %>% pull(n)` articles due to broken links `r #prereg_non_functional_reasons %>% filter(prereg_access_detail == "Broken link") %>% pull(n)`. Thus, the overall prevalence of functional preregistration was `r prereg_functional_overall %>% filter(prereg_statement == "YES — the statement says that there is a preregistration", prereg_access_status == "YES") %>% pull(report)` articles (Figure 1).
+
+## Preregistration registries
+
+```{r}
+prereg_access_overall <- d_eligible %>%
+  filter(prereg_statement == "YES — the statement says that there is a preregistration", prereg_access_status == "YES") %>%
+  count(prereg_access_method, .drop = F)
+```
+The most commonly used registry for functional preregistration was `r prereg_access_overall %>% filter(n == max(n)) %>% pull(prereg_access_method)` (n = `r prereg_access_overall %>% filter(n == max(n)) %>% pull(n)` articles). Other platforms (American Economic Association Registry, ClinicalTrials.gov, and ISRCTN) each accounted for one article.
+
+# Materials
+
+## Materials availability statements
+
+```{r}
+materials_statement_overall <- d_eligible %>%
+  count_percent(materials_statement)
+
+## Justifications for restricting access to materials
+materials_reasons_overall <- d_eligible %>%
+  filter(materials_statement %in% c("YES — the statement says that the materials are not available", "UNCLEAR — the statement says that the materials are available on request")) %>%
+  count(materials_reasons, .drop = F)
+```
+
+`r materials_statement_overall %>% filter(materials_statement == "NO — there is no materials availability statement") %>% pull(report)` articles did not contain any statements about materials availability and `r materials_statement_overall %>% filter(materials_statement == "UNCLEAR — the statement says that the materials are available on request") %>% pull(report)` articles stated that materials were only available on request. None of these articles provided a reason for not sharing or limiting access to materials`r #materials_reasons_overall`. The remaining `r materials_statement_overall %>% filter(materials_statement == "YES — the statement says that all or some materials are available") %>% pull(report)` articles stated that at least some of the materials were available.
+
+## Functional availability of materials
+
+```{r}
+materials_functional_overall <- d_eligible %>%
+  count_percent(materials_statement, materials_access_status)
+
+materials_non_functional_reasons <- d_eligible %>%
+  filter(materials_access_status == "NO") %>%
+  count(materials_access_detail, .drop = F)
+```
+
+Of the `r materials_statement_overall %>% filter(materials_statement == "YES — the statement says that all or some materials are available") %>% pull(n)` articles which stated that at least some of the materials were available, we could not access the materials in `r d_eligible %>% count(materials_statement, materials_access_status) %>% filter(materials_statement == "YES — the statement says that all or some materials are available", materials_access_status == "NO") %>% pull(n)` cases, either because we could not find any materials at the provided link (n = `r materials_non_functional_reasons %>% filter(materials_access_detail == "No materials at link") %>% pull(n)`), the access instructions were unclear (n = `r materials_non_functional_reasons %>% filter(materials_access_detail == "Unclear access instructions") %>% pull(n)`), or a link was broken (n = `r materials_non_functional_reasons %>% filter(materials_access_detail == "Broken link") %>% pull(n)`). Thus, the overall prevalence of articles functionally sharing at least some materials was `r materials_functional_overall %>% filter(materials_statement == "YES — the statement says that all or some materials are available", materials_access_status == "YES") %>% pull(report)` articles. 
+
+Of the `r d_eligible %>% filter(materials_statement %in% c("YES — the statement says that the materials are not available", "UNCLEAR — the statement says that the materials are available on request")) %>% nrow()` articles that said materials were only available on request, none`r #materials_reasons_overall %>% filter(materials_reasons == "NO")` provided a reason for limiting access.
+
+## Access method
+
+```{r}
+materials_access_method_overall <- d_eligible %>%
+  filter(materials_statement == "YES — the statement says that all or some materials are available", materials_access_status == "YES") %>%
+  count(materials_statement, materials_access_status, materials_access_method, .drop = F)
+```
+
+Materials were most often shared via `r materials_access_method_overall %>% filter(n == max(n)) %>% pull(materials_access_method)` (n = `r materials_access_method_overall %>% filter(n == max(n)) %>% pull(n)` articles) followed by `r materials_access_method_overall %>% arrange(desc(n)) %>% slice(2) %>% pull(materials_access_method)` (n = `r materials_access_method_overall %>% arrange(desc(n)) %>% slice(2) %>% pull(n)` articles), `r materials_access_method_overall %>% arrange(desc(n)) %>% slice(3) %>% pull(materials_access_method)` (n = `r materials_access_method_overall %>% arrange(desc(n)) %>% slice(3) %>% pull(n)` articles), and `r materials_access_method_overall %>% arrange(desc(n)) %>% slice(4) %>% pull(materials_access_method)` (n = `r materials_access_method_overall %>% arrange(desc(n)) %>% slice(4) %>% pull(n)` articles). 
+
+# Data
+
+## Data availability statements
+
+```{r}
+data_statement_overall <- d_eligible %>%
+  count_percent(data_statement)
+```
+
+`r data_statement_overall %>% filter(data_statement == "NO — there is no data availability statement") %>% pull(report)` articles did not contain any statements about data availability, `r data_statement_overall %>% filter(data_statement == "UNCLEAR — the statement says that the data may be available but access is restricted") %>% pull(report)` articles said that the data may be available, but access was restricted, `r data_statement_overall %>% filter(data_statement == "UNCLEAR — the statement says that the data are available on request") %>% pull(report)` articles said that the data were only available on request, `r data_statement_overall %>% filter(data_statement == "YES — the statement says that the data are not available") %>% pull(report)` articles explicitly said that the data were not available, and `r data_statement_overall %>% filter(data_statement == "UNCLEAR — the statement is unclear") %>% pull(report)` article had an unclear data availability statement. The remaining articles, `r data_statement_overall %>% filter(data_statement == "YES — the statement says that the data are available") %>% pull(report)` stated that data were available.
+
+## Functional availability of data
+
+```{r}
+data_functional_overall <- d_eligible %>%
+  count_percent(data_statement, data_access_status)
+
+data_non_functional_reasons <- d_eligible %>%
+  filter(data_statement == "YES — the statement says that the data are available", data_access_status == "NO") %>%
+  count(data_access_detail, .drop = F)
+```
+
+Of the `r data_statement_overall %>% filter(data_statement == "YES — the statement says that the data are available") %>% pull(n)` articles which stated that data were available, we could not access the data in `r d_eligible %>% count(data_statement, data_access_status) %>% filter(data_statement == "YES — the statement says that the data are available", data_access_status == "NO") %>% pull(n)` cases, either because the access instructions were unclear (n = `r data_non_functional_reasons %>% filter(data_access_detail == "Unclear access instructions") %>% pull(n)`), a link was broken (n = `r data_non_functional_reasons %>% filter(data_access_detail == "Broken link") %>% pull(n)`), the data no longer appeared to be available (n = `r data_non_functional_reasons %>% filter(data_access_detail == "Data no longer available") %>% pull(n)`), or we were not authorised to access the data (n = `r data_non_functional_reasons %>% filter(data_access_detail == "Not authorised to access data") %>% pull(n)`). Thus, the overall prevalence of articles functionally sharing data was `r data_functional_overall %>% filter(data_statement == "YES — the statement says that the data are available", data_access_status == "YES") %>% pull(report)` articles. 
+
+## Justifications for restricting access to data
+```{r}
+data_reasons_overall <- d_eligible %>%
+  filter(data_statement %in% c("YES — the statement says that the data are not available", "UNCLEAR — the statement says that the data are available on request", "UNCLEAR — the statement says that the data may be available but access is restricted")) %>%
+  count(data_reasons, .drop = F)
+
+data_reasons_types <- d_eligible %>% 
+  filter(data_reasons == "YES") %>% 
+  count(data_reasons_type)
+```
+
+Of the `r data_reasons_overall %>% pull(n) %>% sum()` articles that explicitly said data was only available on request, available only via restricted access, or not available at all, `r data_reasons_overall %>% filter(data_reasons == "YES") %>% pull(n)` provided a justification. Of these articles, the justifications were to protect participant privacy (n = `r data_reasons_types %>% filter(data_reasons_type == "Privacy") %>% pull(n)`), participant consent to share data was not obtained (n = `r data_reasons_types %>% filter(data_reasons_type == "Did not obtain consent to share") %>% pull(n)`), the data had been shared with the authors "under license" (n = `r data_reasons_types %>% filter(data_reasons_type == "Under license") %>% pull(n)`), the data were proprietary (n = `r data_reasons_types %>% filter(data_reasons_type == "Proprietary data") %>% pull(n)`), the ethics board did not give permission to share data (n = `r data_reasons_types %>% filter(data_reasons_type == "Ethics board") %>% pull(n)`; NB. the statement did not say why), the authors did not have permission to share data (n = `r data_reasons_types %>% filter(data_reasons_type == "Authors do not have permission") %>% pull(n)`; NB. the statement did not say who needed to grant permission), and no new data were created during the study (n = `r data_reasons_types %>% filter(data_reasons_type == "No new data") %>% pull(n)`; NB. the authors presumably thought it was not their responsibility to share the data because they came from a third party source). 
+
+## Methods of sharing data
+
+```{r}
+data_access_method_overall <- d_eligible %>%
+  filter(data_statement == "YES — the statement says that the data are available", data_access_status == "YES") %>%
+  count(data_statement, data_access_status, data_access_method, .drop = F)
+```
+
+The most common method for functional data sharing was via `r data_access_method_overall %>% filter(n == max(n)) %>% pull(data_access_method)` (n = `r data_access_method_overall %>% filter(n == max(n)) %>% pull(n)` articles). Data were also shared via a third party (n = `r data_access_method_overall %>% filter(data_access_method == "From a third party") %>% pull(n)`), via a personal website (n = `r data_access_method_overall %>% filter(data_access_method == "Personal or institution website") %>% pull(n)`), or via supplementary materials hosted by the journal (n = `r data_access_method_overall %>% filter(data_access_method == "Supplementary materials hosted by the journal") %>% pull(n)`). 
+
+# Analysis scripts
+
+## Statement
+
+```{r}
+analysis_statement_overall <- d_eligible %>%
+  count_percent(analysis_statement)
+
+## Justifications for restricting access to data
+analysis_reasons_overall <- d_eligible %>%
+  filter(analysis_statement %in% c("YES — the statement says that the analysis scripts are not available", "UNCLEAR — the statement says that the analysis scripts are available on request")) %>%
+  count(analysis_reasons, .drop = F)
+```
+
+`r analysis_statement_overall %>% filter(analysis_statement == "NO — there is no analysis script availability statement") %>% pull(report)` articles did not contain any statements about analysis availability, `r analysis_statement_overall %>% filter(analysis_statement == "UNCLEAR — the statement says that the analysis scripts are available on request") %>% pull(report)` articles said that analysis scripts were only available on request, and `r analysis_statement_overall %>% filter(analysis_statement == "YES — the statement says that the analysis scripts are not available") %>% pull(report)` articles explicitly said that the analysis scripts were not available. None of these articles provided a justification for restricting access to analysis scripts`r #analysis_reasons_overall`. The remaining `r analysis_statement_overall %>% filter(analysis_statement == "YES — the statement says that the analysis scripts are available") %>% pull(report)` articles stated that the analysis scripts were available.
+
+## Functional availability of analysis scripts
+
+```{r}
+analysis_functional_overall <- d_eligible %>%
+  count_percent(analysis_statement, analysis_access_status)
+
+analysis_non_functional_reasons <- d_eligible %>%
+  filter(analysis_access_status == "NO") %>%
+  count(analysis_access_detail, .drop = F)
+```
+
+Of the `r analysis_statement_overall %>% filter(analysis_statement == "YES — the statement says that the analysis scripts are available") %>% pull(n)` articles which stated that analysis scripts were available, we could not access the analysis scripts in `r d_eligible %>% count(analysis_statement, analysis_access_status) %>% filter(analysis_statement == "YES — the statement says that the analysis scripts are available", analysis_access_status == "NO") %>% pull(n)` cases, either because the access instructions were unclear (n = `r analysis_non_functional_reasons %>% filter(analysis_access_detail == "Unclear access instructions") %>% pull(n)`), a link was broken (n = `r analysis_non_functional_reasons %>% filter(analysis_access_detail == "Broken link") %>% pull(n)`), or we could not find any analysis scripts at the end of the link (n = `r analysis_non_functional_reasons %>% filter(analysis_access_detail == "No analysis scripts at link") %>% pull(n)`). Thus, the overall prevalence of articles functionally sharing analysis scripts was `r analysis_functional_overall %>% filter(analysis_statement == "YES — the statement says that the analysis scripts are available", analysis_access_status == "YES") %>% pull(report)` articles. 
+
+## Access method
+
+```{r}
+analysis_access_method_overall <- d_eligible %>%
+  filter(analysis_statement == "YES — the statement says that the analysis scripts are available", analysis_access_status == "YES") %>%
+  count(analysis_statement, analysis_access_status, analysis_access_method, .drop = F)
+```
+
+The most common method for functional analysis script sharing was via `r analysis_access_method_overall %>% filter(n == max(n)) %>% pull(analysis_access_method)` (n = `r analysis_access_method_overall %>% filter(n == max(n)) %>% pull(n)` articles). Analysis scripts were also shared via a personal website (n = `r analysis_access_method_overall %>% filter(analysis_access_method == "Personal or institution website") %>% pull(n)`), or via supplementary materials hosted by the journal (n = `r analysis_access_method_overall %>% filter(analysis_access_method == "Supplementary materials hosted by the journal") %>% pull(n)`). 
+
+# Reporting guidelines
+
+```{r}
+# Statements
+reporting_statement_overall <- d_eligible %>%
+  count_percent(reporting_statement)
+
+# Guideline type
+reporting_type_overall <- d_eligible %>%
+  filter(reporting_statement == "YES — the statement discloses use of at least one reporting guideline") %>%
+  count(reporting_type)
+```
+
+## Use of reporting guidelines
+`r reporting_statement_overall %>% filter(reporting_statement == "NO — there is no statement related to reporting guidelines") %>% pull(report)` articles did not refer to a reporting guideline and the remaining `r reporting_statement_overall %>% filter(reporting_statement == "YES — the statement discloses use of at least one reporting guideline") %>% pull(report)` articles did refer to a reporting guideline. 
+
+## Types of reporting guidelines
+Researchers reported using CONSORT (n = `r reporting_type_overall %>% filter(reporting_type == "CONSORT") %>% pull(n)`), Nature Reporting Summary (n = `r reporting_type_overall %>% filter(reporting_type == "Nature Reporting Summary") %>% pull(n)`), STROBE (n = `r reporting_type_overall %>% filter(reporting_type == "STROBE") %>% pull(n)`), PRISMA (n = `r reporting_type_overall %>% filter(reporting_type == "PRISMA") %>% pull(n)`), and COREQ (n = `r reporting_type_overall %>% filter(reporting_type == "COREQ") %>% pull(n)`).
+
+# Funding disclosures
+
+```{r}
+# Statements
+funding_statement_overall <- d_eligible %>%
+  mutate(funding_statement = case_when(
+    funding_statement %in% c("YES — the statement discloses at least one source of funding","YES — the statement says that there was no relevant funding") ~ "Yes", 
+    funding_statement == "NO — there is no funding statement" ~ "No")) %>%
+  count_percent(funding_statement)
+
+# Statement type
+funding_detail_overall <- d_eligible %>%
+  count_percent(funding_statement)
+```
+
+## Funding statements
+`r funding_statement_overall %>% filter(funding_statement == "Yes") %>% pull(report)` articles contained a funding statement and the remaining `r funding_statement_overall %>% filter(funding_statement == "No") %>% pull(report)` articles did not. Of the `r funding_statement_overall %>% filter(funding_statement == "Yes") %>% pull(n)` articles that contained a funding statement, `r funding_detail_overall %>% filter(funding_statement == "YES — the statement discloses at least one source of funding") %>% pull(n)` disclosed at least one source of funding and `r funding_detail_overall %>% filter(funding_statement == "YES — the statement says that there was no relevant funding") %>% pull(n)` explicitly stated that there was no relevant funding.
+
+# Conflict of interest disclosures
+
+```{r}
+# Statements
+coi_statement_overall <- d_eligible %>%
+  mutate(coi_statement = case_when(
+    coi_statement %in% c("YES — the statement discloses at least one conflict of interest","YES — the statement says that there were no conflicts of interest") ~ "Yes", 
+    coi_statement == "NO — there is no conflict of interest statement" ~ "No")) %>%
+  count_percent(coi_statement)
+
+# Statement type
+coi_detail_overall <- d_eligible %>%
+  count_percent(coi_statement)
+```
+## Conflict of interest statements
+`r coi_statement_overall %>% filter(coi_statement == "Yes") %>% pull(report)` articles contained a conflict of interest statement and the remaining `r coi_statement_overall %>% filter(coi_statement == "No") %>% pull(report)` articles did not. Of the `r coi_statement_overall %>% filter(coi_statement == "Yes") %>% pull(n)` articles that contained a conflict of interest statement, `r coi_detail_overall %>% filter(coi_statement == "YES — the statement discloses at least one conflict of interest") %>% pull(n)` disclosed at least one conflict of interest and `r coi_detail_overall %>% filter(coi_statement == "YES — the statement says that there were no conflicts of interest") %>% pull(n)` explicitly stated that there were no conflicts of interest.
+
+## Open access
+
+```{r}
+open_access_overall <- d_eligible %>%
+  count_percent(open_access_status)
+```
+
+We identified an open access version for `r open_access_overall %>% filter(open_access_status == "Yes") %>% pull(report)` articles (Figure 1). The remaining `r open_access_overall %>% filter(open_access_status != "Yes") %>% pull(report)` articles were only accessible through a paywall.
+
+# Plots
+
+```{r}
+plot_data <- bind_rows(
+
+  prereg_functional_overall %>%
+    filter(prereg_statement == "YES — the statement says that there is a preregistration", prereg_access_status == "YES") %>%
+    mutate(practice = "Preregistration", var = "prereg_functional") %>%
+    select(practice, var, n, N, percent),
+
+  materials_functional_overall %>%
+    filter(materials_statement == "YES — the statement says that all or some materials are available", materials_access_status == "YES") %>%
+    mutate(practice = "Materials sharing", var = "materials_functional") %>%
+    select(practice, var, n, N, percent),
+
+  data_functional_overall %>%
+    filter(data_statement == "YES — the statement says that the data are available", data_access_status == "YES") %>%
+    mutate(practice = "Data sharing", var = "data_functional") %>%
+    select(practice, var, n, N, percent),
+
+  analysis_functional_overall %>%
+    filter(analysis_statement == "YES — the statement says that the analysis scripts are available", analysis_access_status == "YES") %>%
+    mutate(practice = "Analysis script sharing",var = "analysis_functional") %>%
+    select(practice, var, n, N, percent),
+
+  reporting_statement_overall %>%
+    filter(reporting_statement == "YES — the statement discloses use of at least one reporting guideline") %>%
+    mutate(practice = "Reporting guidelines",var = "reporting_any") %>%
+    select(practice, var, n, N, percent),
+  
+  funding_statement_overall %>%
+    filter(funding_statement == "Yes") %>%
+    mutate(practice = "Funding statement",var = "funding_statement_any") %>%
+    select(practice, var, n, N, percent),
+
+  coi_statement_overall %>%
+    filter(coi_statement == "Yes") %>%
+    mutate(practice = "Conflict of interest statement",var = "coi_statement_any") %>%
+    select(practice, var, n, N, percent),
+  
+    open_access_overall %>%
+    filter(open_access_status == "Yes") %>%
+    mutate(practice = "Open access", var = "open_access") %>%
+    select(practice, var, n, N, percent)
+)
+```
+
+
+
+```{r}
+# Plot
+plot_data %>%
+    mutate(practice = factor(practice, levels = rev(c("Preregistration","Materials sharing","Data sharing","Analysis script sharing", "Reporting guidelines", "Funding statement", "Conflict of interest statement", "Open access")))) %>%
+  ggplot(aes(x = percent, y = practice)) +
+
+  # Reference lines
+  geom_vline(xintercept = seq(0, 100, 20),
+             colour = "grey70", linewidth = 0.4, linetype = "dashed") +
+  # Stem
+  geom_segment(
+    aes(x = 0, xend = percent, y = practice, yend = practice),
+    linewidth = 0.8, alpha = 0.6
+  ) +
+ 
+  # Lollipop head
+  geom_point(size = 6, alpha = 0.95) +
+ 
+  # Percent label just to the right of each dot
+  geom_text(
+    aes(label = paste0(percent, "%")),
+    hjust = -0.45, size = 3.5, fontface = "bold", colour = "grey25"
+  ) +
+ 
+  # Extend x axis so labels fit
+  scale_x_continuous(
+    limits = c(0, 100),
+    breaks = seq(0, 100, 20),
+    labels = function(x) paste0(x, "%"),
+    expand = expansion(mult = c(0, 0.02))
+  ) +
+ 
+  labs(
+    title    = "",
+    subtitle = "",
+    x        = "Articles",
+    y        = NULL
+  ) +
+ 
+  theme_minimal(base_size = 13) +
+  theme(
+    plot.title         = element_text(face = "bold", size = 15, margin = margin(b = 4)),
+    plot.subtitle      = element_text(colour = "grey45", size = 11, margin = margin(b = 14)),
+    plot.background    = element_rect(fill = "#FFF", colour = NA),
+    panel.background   = element_rect(fill = "#FFF", colour = NA),
+    panel.grid.major.y = element_blank(),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor   = element_blank(),
+    axis.text.y        = element_text(size = 12, colour = "grey20"),
+    axis.text.x        = element_text(size = 12, colour = "grey40"),
+    axis.title.x       = element_text(size = 12, colour = "grey30", margin = margin(t = 8)),
+    axis.line.y = element_line(colour = "grey20"),
+    legend.position    = "bottom",
+    legend.text        = element_text(size = 11),
+    plot.margin        = margin(16, 24, 12, 12) 
+  )
+```
+
+# Supplementary information
+
+## Article characteristics
+
+Supplementary Tables X. Number of articles per journal. Ten most common journals shown. For all journals, see the raw data.
+
+```{r}
+d_eligible %>% 
+    count(journal) %>% 
+    arrange(desc(n)) %>%
+    slice(1:10) %>%
+    kable(format = "html")
+```
+
+Supplementary Figure X. Number of articles per publication year.
+
+```{r}
+d_eligible %>% 
+  count(publication_year) %>%
+  mutate(publication_year = as.numeric(publication_year)) %>%
+  ggplot(aes(x = publication_year, y = n)) +
+    geom_col() + 
+    theme_minimal(base_size = 13) +
+    ylim(c(0, 60)) +
+    xlab('publication year') +
+    ylab('articles (n)') +
+    scale_x_continuous(labels = seq(2014,2025,1), breaks = seq(2014,2025,1))
+```
+
+
+## Access methods for preregistrations, measurement instruments, data, and analysis scripts. Types of reporting guidelines.
+
+Supplementary Table X. Preregistration registries.
+
+```{r}
+prereg_access_overall %>% 
+  select("Registry" = prereg_access_method, n) %>% 
+  arrange(desc(n)) %>%
+  kable(format = "html")
+```
+
+Supplementary Table X. Measurement instrument sharing methods.
+
+```{r}
+materials_access_method_overall  %>% 
+  select("Method" = materials_access_method, n) %>% 
+  arrange(desc(n)) %>%
+  kable(format = "html")
+```
+
+Supplementary Table X. Data sharing methods.
+
+```{r}
+data_access_method_overall  %>% 
+  select("Method" = data_access_method, n) %>% 
+  arrange(desc(n)) %>%
+  kable(format = "html")
+```
+
+Supplementary Table X. Analysis script sharing methods.
+
+```{r}
+analysis_access_method_overall  %>% 
+  select("Method" = analysis_access_method, n) %>% 
+  arrange(desc(n)) %>%
+  kable(format = "html")
+```
+
+## Subgroup analyses based on research type and data type 
+
+```{r}
+# Functional preregistration by research type (primary/secondary)
+prereg_functional_by_research_type <- d_eligible %>%
+  mutate(prereg_access_status = factor(prereg_access_status, levels = c("NO", "YES")), # show zero percentages too
+         prereg_access_status = fct_na_value_to_level(prereg_access_status, level = "NO")) %>% # convert NAs to "NO"
+
+  count(research_design, prereg_access_status, .drop = F) %>%
+  group_by(research_design) %>%
+  mutate(N = sum(n), percent = signif((n/N)*100,2), report = paste0(n,'/',N,' (',percent,'%)')) %>%
+  filter(prereg_access_status == "YES") %>%
+  mutate(research_design = factor(research_design),
+         research_design = fct_recode(research_design, "Primary" = "Primary research study", "Secondary" = "Secondary analysis", "Both research types" = "Primary research study, Secondary analysis")) %>%
+  select(research_design, report) %>%
+  pivot_wider(names_from = research_design, values_from = report)
+
+# Functional preregistration by data type (quantitative, qualitative)
+prereg_functional_by_data_type <- d_eligible %>%
+  mutate(prereg_access_status = factor(prereg_access_status, levels = c("NO", "YES")), # show zero percentages too
+         prereg_access_status = fct_na_value_to_level(prereg_access_status, level = "NO")) %>% # convert NAs to "NO"
+  count(data_type, prereg_access_status, .drop = F) %>%
+  group_by(data_type) %>%
+  mutate(N = sum(n), percent = signif((n/N)*100,2), report = paste0(n,'/',N,' (',percent,'%)')) %>%
+  filter(prereg_access_status == "YES") %>%
+  mutate(data_type = factor(data_type),
+         data_type = fct_recode(data_type, "Both data types" = "Qualitative data, Quantitative data")) %>%
+  select(data_type, report) %>%
+  pivot_wider(names_from = data_type, values_from = report)
+
+# Combine prereg
+prereg_subgroup <- bind_cols(prereg_functional_by_research_type, prereg_functional_by_data_type) %>%
+  mutate(`Practice` = "Preregistration")
+
+# Functional materials sharing by research type (primary/secondary)
+materials_functional_by_research_type <- d_eligible %>%
+  mutate(materials_access_status = factor(materials_access_status, levels = c("NO", "YES")), # show zero percentages too
+         materials_access_status = fct_na_value_to_level(materials_access_status, level = "NO")) %>% # convert NAs to "NO"
+
+  count(research_design, materials_access_status, .drop = F) %>%
+  group_by(research_design) %>%
+  mutate(N = sum(n), percent = signif((n/N)*100,2), report = paste0(n,'/',N,' (',percent,'%)')) %>%
+  filter(materials_access_status == "YES") %>%
+  mutate(research_design = factor(research_design),
+         research_design = fct_recode(research_design, "Primary" = "Primary research study", "Secondary" = "Secondary analysis", "Both research types" = "Primary research study, Secondary analysis")) %>%
+  select(research_design, report) %>%
+  pivot_wider(names_from = research_design, values_from = report)
+
+# Functional materials by data type (quantitative, qualitative)
+materials_functional_by_data_type <- d_eligible %>%
+  mutate(materials_access_status = factor(materials_access_status, levels = c("NO", "YES")), # show zero percentages too
+         materials_access_status = fct_na_value_to_level(materials_access_status, level = "NO")) %>% # convert NAs to "NO"
+  count(data_type, materials_access_status, .drop = F) %>%
+  group_by(data_type) %>%
+  mutate(N = sum(n), percent = signif((n/N)*100,2), report = paste0(n,'/',N,' (',percent,'%)')) %>%
+  filter(materials_access_status == "YES") %>%
+  mutate(data_type = factor(data_type),
+         data_type = fct_recode(data_type, "Both data types" = "Qualitative data, Quantitative data")) %>%
+  select(data_type, report) %>%
+  pivot_wider(names_from = data_type, values_from = report)
+
+# Combine materials
+materials_subgroup <- bind_cols(materials_functional_by_research_type, materials_functional_by_data_type) %>%
+  mutate(`Practice` = "Materials")
+
+# Functional data sharing by research type (primary/secondary)
+data_functional_by_research_type <- d_eligible %>%
+  mutate(data_access_status = factor(data_access_status, levels = c("NO", "YES")), # show zero percentages too
+         data_access_status = fct_na_value_to_level(data_access_status, level = "NO")) %>% # convert NAs to "NO"
+
+  count(research_design, data_access_status, .drop = F) %>%
+  group_by(research_design) %>%
+  mutate(N = sum(n), percent = signif((n/N)*100,2), report = paste0(n,'/',N,' (',percent,'%)')) %>%
+  filter(data_access_status == "YES") %>%
+  mutate(research_design = factor(research_design),
+         research_design = fct_recode(research_design, "Primary" = "Primary research study", "Secondary" = "Secondary analysis", "Both research types" = "Primary research study, Secondary analysis")) %>%
+  select(research_design, report) %>%
+  pivot_wider(names_from = research_design, values_from = report)
+
+# Functional data by data type (quantitative, qualitative)
+data_functional_by_data_type <- d_eligible %>%
+  mutate(data_access_status = factor(data_access_status, levels = c("NO", "YES")), # show zero percentages too
+         data_access_status = fct_na_value_to_level(data_access_status, level = "NO")) %>% # convert NAs to "NO"
+  count(data_type, data_access_status, .drop = F) %>%
+  group_by(data_type) %>%
+  mutate(N = sum(n), percent = signif((n/N)*100,2), report = paste0(n,'/',N,' (',percent,'%)')) %>%
+  filter(data_access_status == "YES") %>%
+  mutate(data_type = factor(data_type),
+         data_type = fct_recode(data_type, "Both data types" = "Qualitative data, Quantitative data")) %>%
+  select(data_type, report) %>%
+  pivot_wider(names_from = data_type, values_from = report)
+
+# Combine data
+data_subgroup <- bind_cols(data_functional_by_research_type, data_functional_by_data_type) %>%
+  mutate(`Practice` = "Data")
+
+# Functional analysis script sharing by research type (primary/secondary)
+analysis_functional_by_research_type <- d_eligible %>%
+  mutate(analysis_access_status = factor(analysis_access_status, levels = c("NO", "YES")), # show zero percentages too
+         analysis_access_status = fct_na_value_to_level(analysis_access_status, level = "NO")) %>% # convert NAs to "NO"
+
+  count(research_design, analysis_access_status, .drop = F) %>%
+  group_by(research_design) %>%
+  mutate(N = sum(n), percent = signif((n/N)*100,2), report = paste0(n,'/',N,' (',percent,'%)')) %>%
+  filter(analysis_access_status == "YES") %>%
+  mutate(research_design = factor(research_design),
+         research_design = fct_recode(research_design, "Primary" = "Primary research study", "Secondary" = "Secondary analysis", "Both research types" = "Primary research study, Secondary analysis")) %>%
+  select(research_design, report) %>%
+  pivot_wider(names_from = research_design, values_from = report)
+
+# Functional analysis by data type (quantitative, qualitative)
+analysis_functional_by_data_type <- d_eligible %>%
+  mutate(analysis_access_status = factor(analysis_access_status, levels = c("NO", "YES")), # show zero percentages too
+         analysis_access_status = fct_na_value_to_level(analysis_access_status, level = "NO")) %>% # convert NAs to "NO"
+  count(data_type, analysis_access_status, .drop = F) %>%
+  group_by(data_type) %>%
+  mutate(N = sum(n), percent = signif((n/N)*100,2), report = paste0(n,'/',N,' (',percent,'%)')) %>%
+  filter(analysis_access_status == "YES") %>%
+  mutate(data_type = factor(data_type),
+         data_type = fct_recode(data_type, "Both data types" = "Qualitative data, Quantitative data")) %>%
+  select(data_type, report) %>%
+  pivot_wider(names_from = data_type, values_from = report)
+
+# Combine analysis
+analysis_subgroup <- bind_cols(analysis_functional_by_research_type, analysis_functional_by_data_type) %>%
+  mutate(`Practice` = "Analysis script")
+
+# Reporting guideline use by research type (primary/secondary)
+reporting_functional_by_research_type <- d_eligible %>%
+  mutate(reporting_statement = factor(reporting_statement)) %>% # show zero percentages too
+  count(research_design, reporting_statement, .drop = F) %>%
+  group_by(research_design) %>%
+  mutate(N = sum(n), percent = signif((n/N)*100,2), report = paste0(n,'/',N,' (',percent,'%)')) %>%
+  filter(reporting_statement == "YES — the statement discloses use of at least one reporting guideline") %>%
+  mutate(research_design = factor(research_design),
+         research_design = fct_recode(research_design, "Primary" = "Primary research study", "Secondary" = "Secondary analysis", "Both research types" = "Primary research study, Secondary analysis")) %>%
+  select(research_design, report) %>%
+  pivot_wider(names_from = research_design, values_from = report)
+
+# Reporting guideline use by data type (quantitative, qualitative)
+reporting_functional_by_data_type <- d_eligible %>%
+  mutate(reporting_statement = factor(reporting_statement)) %>% # show zero percentages too
+  count(data_type, reporting_statement, .drop = F) %>%
+  group_by(data_type) %>%
+  mutate(N = sum(n), percent = signif((n/N)*100,2), report = paste0(n,'/',N,' (',percent,'%)')) %>%
+  filter(reporting_statement == "YES — the statement discloses use of at least one reporting guideline") %>%
+  mutate(data_type = factor(data_type),
+         data_type = fct_recode(data_type, "Both data types" = "Qualitative data, Quantitative data")) %>%
+  select(data_type, report) %>%
+  pivot_wider(names_from = data_type, values_from = report)
+
+# Combine reporting
+reporting_subgroup <- bind_cols(reporting_functional_by_research_type, reporting_functional_by_data_type) %>%
+  mutate(`Practice` = "Reporting guidelines")
+
+# Table 
+bind_rows(prereg_subgroup, materials_subgroup, data_subgroup, analysis_subgroup, reporting_subgroup) %>%
+  relocate(Practice, Primary, Secondary, `Both research types`, `Quantitative data`, `Qualitative data`, `Both data types`) %>%  # put columns in order
+  kable(format = "html") %>%
+  add_header_above(
+    c(
+      " " = 1,
+      "Research type" = 3,
+      "Data type"     = 3
+    ),
+    bold = TRUE
+  ) %>%
+  kable_styling(full_width = FALSE)
+```
+
+# Temporal trends
+
+A theme to be used for plots.
+
+```{r}
+theme_custom <- function () { 
+  theme_grey(base_size = 16, base_family = "sans") %+replace% 
+    theme(
+      # plot margin
+      plot.margin = unit(rep(0.5, 4), "cm"),
+      # plot background and border
+      plot.background = element_blank(),
+      panel.background = element_blank(),
+      panel.border = element_blank(),
+      # grid lines
+      panel.grid.major.x = element_blank(),
+      panel.grid.major.y = element_line(linewidth = 0.5, linetype = 'dotted', color = "#cbcbcb"), 
+      panel.grid.minor = element_blank(),
+      # axis ticks and lines
+      axis.ticks = element_blank(),
+      axis.line = element_blank(),
+      # axis labels
+      axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1),
+      # legend
+      legend.position = "bottom",
+      legend.margin = margin(0),
+      legend.background = element_blank(),
+      legend.key = element_blank(),
+      legend.title = element_text(size = 13, colour = "#333333"),
+      legend.text.align = 0,
+      legend.text = element_text(size = 13, colour = "#333333"),
+      # faceting
+      strip.background = element_rect(fill = "transparent", colour = NA),
+      strip.text = element_text(size = 16, face = "bold", colour = "#333333", hjust = 0, margin = margin(b = 10, t = 10))
+    )
+}
+```
+
+```{r}
+temporal_data <- bind_rows(
+  
+  d_eligible %>%
+    mutate(prereg_access_status = ifelse(is.na(prereg_access_status), "NO", prereg_access_status)) %>%
+    count(publication_year, status = prereg_access_status) %>%
+    mutate(practice = "Preregistration"),
+  
+  d_eligible %>%
+    mutate(materials_access_status = ifelse(is.na(materials_access_status), "NO", materials_access_status)) %>%
+    count(publication_year, status = materials_access_status) %>%
+    mutate(practice = "Materials sharing"),
+  
+  d_eligible %>%
+    mutate(data_access_status = ifelse(is.na(data_access_status), "NO", data_access_status)) %>%
+    count(publication_year, status = data_access_status) %>%
+    mutate(practice = "Data sharing"),
+  
+  d_eligible %>%
+    mutate(analysis_access_status = ifelse(is.na(analysis_access_status), "NO", analysis_access_status)) %>%
+    count(publication_year, status = analysis_access_status) %>%
+    mutate(practice = "Analysis script sharing"),
+  
+  d_eligible %>%
+    mutate(reporting_statement = ifelse(reporting_statement == "YES — the statement discloses use of at least one reporting guideline", "YES", "NO")) %>%
+    count(publication_year, status = reporting_statement) %>%
+    mutate(practice = "Reporting guideline"),
+  
+  d_eligible %>%
+    mutate(funding_statement = ifelse(funding_statement == "NO — there is no funding statement", "NO", "YES")) %>%
+    count(publication_year, status = funding_statement) %>%
+    mutate(practice = "Funding statement"),
+  
+  d_eligible %>%
+    mutate(coi_statement = ifelse(coi_statement == "NO — there is no conflict of interest statement", "NO", "YES")) %>%
+    count(publication_year, status = coi_statement) %>%
+    mutate(practice = "COI statement"),
+  
+  d_eligible %>%
+    mutate(open_access_status = ifelse(open_access_status == "Yes", "YES", "NO")) %>%
+    count(publication_year, status = open_access_status) %>%
+    mutate(practice = "Open access")
+) %>%
+  mutate(practice = factor(practice, levels = c("Preregistration", "Materials sharing", "Data sharing", "Analysis script sharing", "Reporting guideline", "Funding statement", "COI statement", "Open access")))
+  
+temporal_data %>%
+    ggplot() +
+    geom_col(aes(x = publication_year, y = n, fill = status)) +
+    facet_wrap(~practice, ncol = 2) +
+    ylim(c(0,60)) +
+    ylab('articles (n)') +
+    xlab('publication year') +
+    labs(fill = "Used transparent practice?") +
+    scale_fill_manual(values = c('gray','limegreen'), labels = c('No', 'Yes')) +
+    theme_custom() +
+  theme()
+
+```
+## Access methods for preregistrations, materials, data, and analysis scripts. Types of reporting guidelines.
+
+Supplementary Table X. Preregistration registries.
+
+```{r}
+prereg_access_overall %>% 
+  select("Registry" = prereg_access_method, n) %>% 
+  arrange(desc(n)) %>%
+  kable(format = "html")
+```
+
+Supplementary Table X. Materials sharing methods.
+
+```{r}
+materials_access_method_overall  %>% 
+  select("Method" = materials_access_method, n) %>% 
+  arrange(desc(n)) %>%
+  kable(format = "html")
+```
+
+Supplementary Table X. Data sharing methods.
+
+```{r}
+data_access_method_overall  %>% 
+  select("Method" = data_access_method, n) %>% 
+  arrange(desc(n)) %>%
+  kable(format = "html")
+```
+
+Supplementary Table X. Analysis script sharing methods.
+
+```{r}
+analysis_access_method_overall  %>% 
+  select("Method" = analysis_access_method, n) %>% 
+  arrange(desc(n)) %>%
+  kable(format = "html")
+```
+
+# Supplementary Information F: Inter-rater agreement
+
+```{r}
+# inter-rater agreement table
+d_ira %>%
+  summarise(across(c(Preregistration, Materials, Data, `Analysis scripts`, `Reporting guidelines`, Funding, `Conflicts of interest`), ~ mean(.x, na.rm = TRUE))) %>%
+  mutate(across(everything(), ~ signif(. * 100, digits = 2))) %>%
+  pivot_longer(cols = everything(), names_to = "Practice", values_to = "Inter-rater agreement (%)") %>%
+  kable(format = "html")
+```
+  
+# Session Info
+
+Information about the software environment used to run the analyses reported in this script.
+
+```{r}
+sessionInfo()
+```
