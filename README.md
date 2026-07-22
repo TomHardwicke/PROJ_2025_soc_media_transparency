@@ -1,2 +1,2 @@
 
- 
+This repository contains the materials, primary data, and analysis scripts for the research project Galet-Lalande, Blackwell, & Hardwicke (2026): Open science in a contentious field: How transparent is research on social media and adolescent mental health?
