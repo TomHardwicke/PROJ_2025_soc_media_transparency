@@ -12,7 +12,11 @@ The R code below reproduces the analyses reported in Galet-Lalande et al. (2026)
 # Load packages
 
 ```{r}
-library(tidyverse) # for general analysis and munging functions
+library(dplyr) # for general analysis and munging functions
+library(tidyr) # for general analysis and munging functions
+library(forcats) # for general analysis and munging functions
+library(readr) # for loading files
+library(ggplot2) # for plotting
 library(here) # for accessing files
 library(knitr) # for tables
 library(kableExtra) # for tables
